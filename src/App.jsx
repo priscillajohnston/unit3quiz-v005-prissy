@@ -9,7 +9,9 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { addDoc, collection, onSnapshot, serverTimestamp } from 'firebase/firestore'
 import './App.css'
+import { db } from './firebase'
 
 function App() {
   const [warehouseData, setWarehouseData] = useState([])
@@ -18,6 +20,10 @@ function App() {
   const [selectedSupplier, setSelectedSupplier] = useState('all')
   const [selectedItemType, setSelectedItemType] = useState('all')
   const [viewMode, setViewMode] = useState('full')
+  const [voteCounts, setVoteCounts] = useState({ support: 0, against: 0 })
+  const [voteLoading, setVoteLoading] = useState(false)
+  const [voteError, setVoteError] = useState(null)
+  const [voteMessage, setVoteMessage] = useState(null)
 
   useEffect(() => {
     async function loadWarehouseData() {
@@ -40,6 +46,27 @@ function App() {
     loadWarehouseData()
   }, [])
 
+  useEffect(() => {
+    const votesRef = collection(db, 'votes')
+    const unsubscribe = onSnapshot(votesRef, (snapshot) => {
+      let support = 0
+      let against = 0
+
+      snapshot.forEach((voteDoc) => {
+        const data = voteDoc.data()
+        if (data.support === true) {
+          support += 1
+        } else if (data.support === false) {
+          against += 1
+        }
+      })
+
+      setVoteCounts({ support, against })
+    })
+
+    return () => unsubscribe()
+  }, [])
+
   const filterOptions = useMemo(() => computeFilterOptions(warehouseData), [warehouseData])
   const isSegmentMode = viewMode === 'segment'
 
@@ -58,6 +85,25 @@ function App() {
   const chartData = useMemo(() => buildMonthlyTotals(filteredData), [filteredData])
   const hasChartData = chartData.length > 0
 
+  const handleVote = async (support) => {
+    setVoteLoading(true)
+    setVoteError(null)
+    setVoteMessage(null)
+
+    try {
+      await addDoc(collection(db, 'votes'), {
+        support,
+        statementId: 'statement-of-intent',
+        createdAt: serverTimestamp(),
+      })
+      setVoteMessage(`Thanks for casting your vote ${support ? 'in support' : 'against'}!`)
+    } catch (error) {
+      setVoteError(error.message || 'Unable to record your vote right now.')
+    } finally {
+      setVoteLoading(false)
+    }
+  }
+
   return (
     <div className="app">
       <header className="hero">
@@ -75,6 +121,59 @@ function App() {
             to handle them. I have interned in US Senator Ed Markey&apos;s office
             and therefore have more experience than anyone else for this job.
           </p>
+        </section>
+
+        <section className="voter">
+          <div className="voter-heading">
+            <h2>Your Voice Matters</h2>
+            <p className="voter-intro">
+              Cast a quick vote on Priscilla&apos;s statement of intent—no sign-up required. Every
+              click is counted instantly.
+            </p>
+          </div>
+
+          <div className="vote-panel">
+            {voteError && <p className="vote-error">{voteError}</p>}
+            {voteMessage && <p className="success-message">{voteMessage}</p>}
+
+            <div className="vote-actions">
+              <button
+                type="button"
+                className="vote-button support"
+                onClick={() => handleVote(true)}
+                disabled={voteLoading}
+              >
+                {voteLoading ? 'Submitting…' : 'I Support It'}
+              </button>
+              <button
+                type="button"
+                className="vote-button against"
+                onClick={() => handleVote(false)}
+                disabled={voteLoading}
+              >
+                {voteLoading ? 'Submitting…' : 'I Oppose It'}
+              </button>
+            </div>
+
+            <p className="status muted">
+              Votes are anonymous and update in real-time so the campaign can stay aligned with the
+              people.
+            </p>
+          </div>
+
+          <div className="vote-results" aria-live="polite">
+            <h3>Current Sentiment</h3>
+            <div className="vote-summary">
+              <div className="vote-summary-card support">
+                <span className="count">{voteCounts.support}</span>
+                <span className="label">Support</span>
+              </div>
+              <div className="vote-summary-card against">
+                <span className="count">{voteCounts.against}</span>
+                <span className="label">Oppose</span>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className="warehouse">
@@ -387,3 +486,4 @@ function formatNumber(value) {
 function formatCompactNumber(value) {
   return compactNumberFormatter.format(value)
 }
+
