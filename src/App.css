@@ -54,6 +54,36 @@ section p {
   color: #334155;
 }
 
+.register-panel {
+  margin-top: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.register-button {
+  border: none;
+  border-radius: 14px;
+  padding: 0.85rem 1.4rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  box-shadow: 0 18px 32px -24px rgba(15, 23, 42, 0.8);
+}
+
+.register-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+
+.register-button:disabled {
+  opacity: 0.75;
+  cursor: progress;
+}
+
 .voter {
   display: flex;
   flex-direction: column;
@@ -129,6 +159,12 @@ section p {
 .vote-button:disabled {
   opacity: 0.75;
   cursor: progress;
+}
+
+.vote-button.selected {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 36px -22px rgba(15, 23, 42, 0.95);
+  outline: 3px solid rgba(255, 255, 255, 0.45);
 }
 
 .vote-results {
@@ -209,6 +245,11 @@ section p {
 
 .status.error {
   color: #dc2626;
+}
+
+.status.success {
+  color: #047857;
+  font-weight: 600;
 }
 
 .status.muted {

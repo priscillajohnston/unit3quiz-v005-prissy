@@ -9,9 +9,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { addDoc, collection, onSnapshot, serverTimestamp } from 'firebase/firestore'
+import { collection, doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore'
+import { onAuthStateChanged, signInWithPopup } from 'firebase/auth'
 import './App.css'
-import { db } from './firebase'
+import { auth, db, googleProvider } from './firebase'
 
 function App() {
   const [warehouseData, setWarehouseData] = useState([])
@@ -20,10 +21,14 @@ function App() {
   const [selectedSupplier, setSelectedSupplier] = useState('all')
   const [selectedItemType, setSelectedItemType] = useState('all')
   const [viewMode, setViewMode] = useState('full')
+  const [authLoading, setAuthLoading] = useState(false)
+  const [authError, setAuthError] = useState(null)
+  const [currentUser, setCurrentUser] = useState(null)
   const [voteCounts, setVoteCounts] = useState({ support: 0, against: 0 })
   const [voteLoading, setVoteLoading] = useState(false)
   const [voteError, setVoteError] = useState(null)
   const [voteMessage, setVoteMessage] = useState(null)
+  const [userVote, setUserVote] = useState(null)
 
   useEffect(() => {
     async function loadWarehouseData() {
@@ -47,25 +52,73 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const votesRef = collection(db, 'votes')
-    const unsubscribe = onSnapshot(votesRef, (snapshot) => {
-      let support = 0
-      let against = 0
-
-      snapshot.forEach((voteDoc) => {
-        const data = voteDoc.data()
-        if (data.support === true) {
-          support += 1
-        } else if (data.support === false) {
-          against += 1
-        }
-      })
-
-      setVoteCounts({ support, against })
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user)
     })
 
     return () => unsubscribe()
   }, [])
+
+  useEffect(() => {
+    const votesRef = collection(db, 'votes')
+    const unsubscribe = onSnapshot(
+      votesRef,
+      (snapshot) => {
+        let support = 0
+        let against = 0
+
+        snapshot.forEach((document) => {
+          const data = document.data()
+          if (data.support === true) {
+            support += 1
+          } else if (data.support === false) {
+            against += 1
+          }
+        })
+
+        setVoteCounts({ support, against })
+      },
+      (error) => {
+        setVoteError(error.message || 'Unable to load vote totals right now.')
+      }
+    )
+
+    return () => unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    if (!currentUser) {
+      setUserVote(null)
+      return
+    }
+
+    const voteDocRef = doc(db, 'votes', currentUser.uid)
+    const unsubscribe = onSnapshot(
+      voteDocRef,
+      (document) => {
+        if (document.exists()) {
+          const data = document.data()
+          setUserVote(data.support === true)
+        } else {
+          setUserVote(null)
+        }
+      },
+      (error) => {
+        setVoteError(error.message || 'Unable to load your vote right now.')
+      }
+    )
+
+    return () => unsubscribe()
+  }, [currentUser])
+
+  useEffect(() => {
+    if (currentUser) {
+      setVoteError(null)
+    }
+    if (!currentUser) {
+      setVoteMessage(null)
+    }
+  }, [currentUser])
 
   const filterOptions = useMemo(() => computeFilterOptions(warehouseData), [warehouseData])
   const isSegmentMode = viewMode === 'segment'
@@ -85,18 +138,46 @@ function App() {
   const chartData = useMemo(() => buildMonthlyTotals(filteredData), [filteredData])
   const hasChartData = chartData.length > 0
 
+  const handleRegister = async () => {
+    setAuthLoading(true)
+    setAuthError(null)
+
+    try {
+      await signInWithPopup(auth, googleProvider)
+    } catch (error) {
+      setAuthError(error.message || 'Unable to register right now.')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
   const handleVote = async (support) => {
+    if (!currentUser) {
+      setVoteError('Please register to vote before casting your ballot.')
+      setVoteMessage(null)
+      return
+    }
+
     setVoteLoading(true)
     setVoteError(null)
     setVoteMessage(null)
 
     try {
-      await addDoc(collection(db, 'votes'), {
-        support,
-        statementId: 'statement-of-intent',
-        createdAt: serverTimestamp(),
-      })
-      setVoteMessage(`Thanks for casting your vote ${support ? 'in support' : 'against'}!`)
+      await setDoc(
+        doc(db, 'votes', currentUser.uid),
+        {
+          support,
+          statementId: 'statement-of-intent',
+          userDisplayName: currentUser.displayName ?? null,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      )
+      setVoteMessage(
+        support
+          ? 'Thanks for supporting the statement. Your vote is saved.'
+          : 'Thanks for sharing your concerns. Your vote is saved.'
+      )
     } catch (error) {
       setVoteError(error.message || 'Unable to record your vote right now.')
     } finally {
@@ -121,14 +202,30 @@ function App() {
             to handle them. I have interned in US Senator Ed Markey&apos;s office
             and therefore have more experience than anyone else for this job.
           </p>
+          <div className="register-panel">
+            <button
+              type="button"
+              className="register-button"
+              onClick={handleRegister}
+              disabled={authLoading}
+            >
+              {authLoading ? 'Connecting…' : 'Register to Vote'}
+            </button>
+            {currentUser && (
+              <p className="status success">
+                Registered as {currentUser.displayName || currentUser.email}
+              </p>
+            )}
+            {authError && <p className="status error">{authError}</p>}
+          </div>
         </section>
 
         <section className="voter">
           <div className="voter-heading">
             <h2>Your Voice Matters</h2>
             <p className="voter-intro">
-              Cast a quick vote on Priscilla&apos;s statement of intent—no sign-up required. Every
-              click is counted instantly.
+              Cast a quick vote on Priscilla&apos;s statement of intent—every response helps guide
+              the campaign.
             </p>
           </div>
 
@@ -139,26 +236,35 @@ function App() {
             <div className="vote-actions">
               <button
                 type="button"
-                className="vote-button support"
+                className={`vote-button support${userVote === true ? ' selected' : ''}`}
                 onClick={() => handleVote(true)}
                 disabled={voteLoading}
+                aria-disabled={!currentUser}
               >
-                {voteLoading ? 'Submitting…' : 'I Support It'}
+                {voteLoading ? 'Submitting…' : userVote === true ? 'You Support It' : 'I Support It'}
               </button>
               <button
                 type="button"
-                className="vote-button against"
+                className={`vote-button against${userVote === false ? ' selected' : ''}`}
                 onClick={() => handleVote(false)}
                 disabled={voteLoading}
+                aria-disabled={!currentUser}
               >
-                {voteLoading ? 'Submitting…' : 'I Oppose It'}
+                {voteLoading ? 'Submitting…' : userVote === false ? 'You Oppose It' : 'I Oppose It'}
               </button>
             </div>
 
-            <p className="status muted">
-              Votes are anonymous and update in real-time so the campaign can stay aligned with the
-              people.
-            </p>
+            {currentUser && userVote === null && (
+              <p className="status muted">You haven&apos;t cast a vote yet.</p>
+            )}
+            {currentUser && userVote !== null && (
+              <p className="status success">
+                You currently {userVote ? 'support' : 'oppose'} the statement.
+              </p>
+            )}
+            {!currentUser && (
+              <p className="status muted">Register above to make your voice count.</p>
+            )}
           </div>
 
           <div className="vote-results" aria-live="polite">
